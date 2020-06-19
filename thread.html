@@ -9,15 +9,12 @@
 
 <body>
 
-    <h2 id="title">OpenCV.js Image Classification Example (Threads)</h2>
+    <h2 id="title">OpenCV.js Semantic Segmentation Example (Threads)</h2>
 
     <div>
         <p><b>Model</b></p>
         <select id='modelName'>
-            <option>squeezenet</option>
-            <option>mobilenetv2</option>
-            <option>resnet50v1</option>
-            <option>resnet50v2</option>
+            <option>deeplabV3</option>
         </select>
         <p id="modelLoad"></p>
         <progress id="modelProgress" value="0" max="100" style="visibility: hidden"></progress>
@@ -31,7 +28,8 @@
 
 
     <div class="inputoutput">
-        <img id="imgsrc" width="224" height="224" alt="No image" src='./image/panda.jpg' />
+        <img id="imgsrc" width="513" height="513" alt="No image" src='./image/woman.jpg' />
+        <canvas id='output' width="513", height="513">
         <br><b>test image</b> <input type="file" id="fileinput" name="file" />
     </div>
 

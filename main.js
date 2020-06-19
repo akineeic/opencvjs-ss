@@ -18,17 +18,10 @@ inputelement.addEventListener("change", (e) =>{
     imgelement.src = URL.createObjectURL(e.target.files[0]);
 }, false);
 
-const modelZoo = [
-    {name: 'squeezenet', url: 'https://webnnmodel.s3-us-west-2.amazonaws.com/image_classification/model/squeezenet1.1.onnx'},
-    {name: 'mobilenetv2', url: 'https://webnnmodel.s3-us-west-2.amazonaws.com/image_classification/model/mobilenetv2-1.0.onnx'},
-    {name: 'resnet50v1', url: 'https://webnnmodel.s3-us-west-2.amazonaws.com/image_classification/model/resnet50v1.onnx'},
-    {name: 'resnet50v2', url: 'https://webnnmodel.s3-us-west-2.amazonaws.com/image_classification/model/resnet50v2.onnx'}
-];
-
 /*************************   CONTROL PARAMETERS   **************************/
 
 // Record if the model have been loaded
-let modelStatus = ['squeezenet', 'mobilenetv2', 'resnet50v1', 'resnet50v2'];
+let modelStatus = ['deeplabV3'];
 // The forward iterations set by user
 let iterations = Number(document.querySelector('#iterations').value);
 // Flag for first run
@@ -44,16 +37,22 @@ let labels;
 // Top result to show
 let classes;
 
+let colors;
+
 //Detect the click, init the UI and control parameters,
 //check if the model have been loaded, then run the test.
 function run(){
     initPara();
     let onnxmodel = document.getElementById("modelName").value;
     let index = modelStatus.indexOf(onnxmodel);
+
+    colors = [0,0,0];
+    while(colors.length<21*3){
+        colors.push( Math.round( (Math.random()*255 + colors[colors.length-3]) / 2 ) );
+    }
+
     if ( index != -1){
-        modelInfo = getModelById(onnxmodel);
-        modelUrl = modelInfo.url;
-        onnxmodel += '.onnx';
+        onnxmodel += '.pb';
         showModel.innerHTML = 'Model loading...';
         createFileFromUrl(onnxmodel, onnxmodel, compute, modelState);
         modelStatus.splice(index, 1);
@@ -110,89 +109,64 @@ function loadLables(){
 
 //The whole compute pipeline.
 function compute (){
-    let inputMat = imageToMat();
-    let onnxmodel = document.getElementById("modelName").value + '.onnx';
-    let net = cv.readNetFromONNX(onnxmodel);
-    console.log('Start inference...')
-    let input = cv.blobFromImage(inputMat, 1, new cv.Size(224, 224), new cv.Scalar(0,0,0));
-    net.setInput(input);
-
-    eachForward(net);
-}
-
-//Excute forward function one by one, update the UI during each forward.
-async function eachForward(net){
-    let start = performance.now();
-    let result =await excute(net);
-    let end = performance.now();
-
-    classes = getTopClasses(result);
-    let delta = end - start;
-    console.log(`Iterations: ${calIteration+1} / ${iterations+1}, inference time: ${delta}ms`);
-    printResult(classes);
-    timeSum.push(delta);   
-    iterationState();
-    ++calIteration;
-
-    if(calIteration<iterations+1){
-        setTimeout(function(){
-            eachForward(net);
-        }, 0);
-    } else{
-        console.log('Test finished!');
-        updateResult(classes);
-        net.delete();
-        result.delete();
-    };
-}
-
-//Excute the net
-async function excute(net){
-    let result = net.forward();
-    return result;
-}
-
-//Read the image from webpage, do the image processing.
-function imageToMat(){
     let mat = cv.imread("imgsrc");
     let matC3 = new cv.Mat(mat.matSize[0],mat.matSize[1],cv.CV_8UC3);
     cv.cvtColor(mat, matC3, cv.COLOR_RGBA2RGB);
     let matdata = matC3.data;
     let stddata = [];
     for(var i=0; i<mat.matSize[0]*mat.matSize[1]; ++i){
-        stddata.push( (matdata[3*i]/255-0.485)/0.229 ); 
-        stddata.push( (matdata[3*i+1]/255-0.456)/0.224 ); 
-        stddata.push( (matdata[3*i+2]/255-0.406)/0.225 );
+        stddata.push( (matdata[3*i]) ); 
+        stddata.push( (matdata[3*i+1]) ); 
+        stddata.push( (matdata[3*i+2]) );
     };
-    let inputMat = cv.matFromArray(mat.matSize[0],mat.matSize[1],cv.CV_32FC3,stddata);
+    let inputMat = cv.matFromArray(mat.matSize[0],mat.matSize[1],cv.CV_32FC3,stddata);         
 
-    return inputMat;
-}
+    let onnxmodel = document.getElementById("modelName").value + '.pb';
+    let net = cv.readNet(onnxmodel);
+    console.log('Start inference...')
+    let input = cv.blobFromImage(inputMat, 0.007843, new cv.Size(513, 513), new cv.Scalar(127.5, 127.5, 127.5), true, false);
+    net.setInput(input);
 
-//Update the iteration UI during the compute process.
-function iterationState() {
-    iterationProgress.style.visibility = 'visible';
-    iterationProgress.value = (calIteration)*100/(iterations);
-    showIterations.innerHTML = `Iterations: ${calIteration} / ${iterations}`;
-}
+    let start = performance.now();
+    let result =net.forward();
+    let end = performance.now();
+    let time  = end-start;
+    console.log(time.toFixed(2));
 
-//Show the final result in the webpage.
-function updateResult(classes){
-    let finalResult = summarize(timeSum);
-    testInfo.style.visibility="visible";
-    testInfo.innerHTML = `<b>Build type</b>: ${document.getElementById("title").innerHTML.split(/[()]/)[1]} <br>
-                                                    <b>Model</b>: ${document.getElementById("modelName").value} <br>
-                                                    <b>Inference Time</b>: ${finalResult.mean.toFixed(2)}`;
-    if(iterations != 1){
-        testInfo.innerHTML += ` ± ${finalResult.std.toFixed(2)} [ms] <br> <br>`;
-    } else{
-        testInfo.innerHTML += ` [ms] <br> <br>`;
-    };
-    testInfo.innerHTML += `<b>label1</b>: ${classes[0].label}, probability: ${classes[0].prob}% <br>
-                           <b>label2</b>: ${classes[1].label}, probability: ${classes[1].prob}% <br>
-                           <b>label3</b>: ${classes[2].label}, probability: ${classes[2].prob}% <br>
-                           <b>label4</b>: ${classes[3].label}, probability: ${classes[3].prob}% <br>
-                           <b>label5</b>: ${classes[4].label}, probability: ${classes[4].prob}%` ;
+    C = result.matSize[1];
+    H = result.matSize[2];
+    W = result.matSize[3];
+
+    let resultData = result.data32F;
+
+    let classId = [];
+    let argmax = [];
+
+    let imgSize = H*W;
+    for (i = 0; i<imgSize; ++i){
+        tmp = 0;
+        for (j = 0; j<C; ++j){
+            if(resultData[j*imgSize+i] > resultData[tmp*imgSize+i]){
+                tmp = j;
+            }
+        }
+        argmax.push(tmp);
+        classId.push(colors[tmp*3]);
+        classId.push(colors[tmp*3+1]);
+        classId.push(colors[tmp*3+2]);
+        classId.push(255);
+    }
+
+    output = cv.matFromArray(513,513,cv.CV_8UC4,classId);
+
+
+    cv.imshow('output',output)
+
+
+    
+    console.log('Test finished!');
+    net.delete();
+    result.delete();
 }
 
 //Load the file from the filesystem.
@@ -224,68 +198,4 @@ function modelState(ev){
     let percentComplete = ev.loaded / ev.total * 100;
     modelLoad.innerHTML = `${loadedSize.toFixed(2)}/${totalSize.toFixed(2)}MB ${percentComplete.toFixed(2)}%`;
     modelProgress.value = percentComplete;
-}
-
-//Add softmax layer to gengerate the probility.
-function softmax(arr) {
-    const C = Math.max(...arr);
-    const d = arr.map((y) => Math.exp(y - C)).reduce((a, b) => a + b);
-    return arr.map((value, index) => { 
-        return Math.exp(value - C) / d;
-    })
-}
-
-//Find the top num labels from the forward result.
-function getTopClasses(mat) {
-    let initdata = mat.data32F;
-    initdata = softmax(initdata);
-    let probs = Array.from(initdata);
-    let indexes = probs.map((prob, index) => [prob, index]);
-    let sorted = indexes.sort((a, b) => {
-    if (a[0] === b[0]) {return 0;}
-    return a[0] < b[0] ? -1 : 1;
-    });
-    sorted.reverse();
-    let classes = [];
-    for (let i = 0; i < topNum; ++i) {
-    let prob = sorted[i][0];
-    let index = sorted[i][1];
-    let c = {
-        label: labels[index],
-        prob: (prob * 100).toFixed(2)
-    }
-    classes.push(c);
-    }
-    return classes;
-}
-
-//Print each inference result in the console.
-function printResult(classes){
-    for (let i = 0; i < topNum; ++i){
-        console.log(`label: ${classes[i].label}, probability: ${classes[i].prob}%`)
-    }
-}
-
-//Generate the summarize result from the collect time.
-function summarize(results) {
-    if (results.length !== 0) {
-        // remove first run, which is regarded as "warming up" execution
-        results.shift();
-        let d = results.reduce((d, v) => {
-            d.sum += v;
-            d.sum2 += v * v;
-            return d;
-        }, {
-            sum: 0,
-            sum2: 0
-        });
-        let mean = d.sum / results.length;
-        let std = Math.sqrt((d.sum2 - results.length * mean * mean) / (results.length - 1));
-        return {
-            mean: mean,
-            std: std
-        };
-    } else {
-        return null;
-    };
 }
