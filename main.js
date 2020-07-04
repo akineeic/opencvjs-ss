@@ -21,7 +21,7 @@ inputelement.addEventListener("change", (e) =>{
 /*************************   CONTROL PARAMETERS   **************************/
 
 // Record if the model have been loaded
-let modelStatus = ['deeplabV3'];
+let modelLoaded = [];
 // The forward iterations set by user
 let iterations = Number(document.querySelector('#iterations').value);
 // Flag for first run
@@ -38,26 +38,26 @@ let labels;
 let classes;
 
 let colors;
+let modelName = 'opt_deeplabv3_mnv2_224.pb';
+let inputSize = [224, 224];
 
 //Detect the click, init the UI and control parameters,
 //check if the model have been loaded, then run the test.
 function run(){
     initPara();
-    let onnxmodel = document.getElementById("modelName").value;
-    let index = modelStatus.indexOf(onnxmodel);
 
     colors = [0,0,0];
     while(colors.length<21*3){
         colors.push( Math.round( (Math.random()*255 + colors[colors.length-3]) / 2 ) );
     }
 
-    if ( index != -1){
-        onnxmodel += '.pb';
+    let index = modelLoaded.indexOf(modelName);
+    if(index === -1) {        
         showModel.innerHTML = 'Model loading...';
-        createFileFromUrl(onnxmodel, onnxmodel, compute, modelState);
-        modelStatus.splice(index, 1);
+        createFileFromUrl(modelName, modelName, compute, modelState);
+        modelLoaded.push(modelName);
     } else{
-        modelLoad.innerHTML = `${onnxmodel} has been loaded before.`;
+        modelLoaded.innerHTML = `${modelName} has been loaded before.`;
         compute();
     };
 }
@@ -121,17 +121,19 @@ function compute (){
     };
     let inputMat = cv.matFromArray(mat.matSize[0],mat.matSize[1],cv.CV_32FC3,stddata);         
 
-    let onnxmodel = document.getElementById("modelName").value + '.pb';
-    let net = cv.readNet(onnxmodel);
+    let net = cv.readNet(modelName);
     console.log('Start inference...')
-    let input = cv.blobFromImage(inputMat, 0.007843, new cv.Size(513, 513), new cv.Scalar(127.5, 127.5, 127.5), true, false);
+    let input = cv.blobFromImage(inputMat, 0.007843, new cv.Size(inputSize[0], inputSize[1]), new cv.Scalar(127.5, 127.5, 127.5), true, false);
     net.setInput(input);
 
-    let start = performance.now();
-    let result =net.forward();
-    let end = performance.now();
-    let time  = end-start;
-    console.log(time.toFixed(2));
+    let result = multiForward(net, 10);
+    let finalResult = summarize(timeSum);
+    console.log(`inference time: ${finalResult.mean.toFixed(2)} ± ${finalResult.std.toFixed(2)}ms`)
+
+    timeSum = []; 
+    result = multiForward(net, 100);
+    finalResult = summarize(timeSum);
+    console.log(`inference time: ${finalResult.mean.toFixed(2)} ± ${finalResult.std.toFixed(2)}ms`)
 
     C = result.matSize[1];
     H = result.matSize[2];
@@ -157,7 +159,7 @@ function compute (){
         classId.push(255);
     }
 
-    output = cv.matFromArray(513,513,cv.CV_8UC4,classId);
+    output = cv.matFromArray(H,W,cv.CV_8UC4,classId);
 
 
     cv.imshow('output',output)
@@ -167,6 +169,18 @@ function compute (){
     console.log('Test finished!');
     net.delete();
     result.delete();
+}
+
+function multiForward(net, num) {
+    let result;
+    for(let i=0; i<num+1; ++i) {
+        let start = performance.now();
+        result =net.forward();
+        let elapsed = performance.now()-start;
+        timeSum.push(elapsed);
+        console.log(`num ${i} forward, time ${elapsed.toFixed(2)}ms`)
+    }
+    return result;    
 }
 
 //Load the file from the filesystem.
@@ -198,4 +212,27 @@ function modelState(ev){
     let percentComplete = ev.loaded / ev.total * 100;
     modelLoad.innerHTML = `${loadedSize.toFixed(2)}/${totalSize.toFixed(2)}MB ${percentComplete.toFixed(2)}%`;
     modelProgress.value = percentComplete;
+}
+
+function summarize(results) {
+    if (results.length !== 0) {
+        // remove first run, which is regarded as "warming up" execution
+        results.shift();
+        let d = results.reduce((d, v) => {
+            d.sum += v;
+            d.sum2 += v * v;
+            return d;
+        }, {
+            sum: 0,
+            sum2: 0
+        });
+        let mean = d.sum / results.length;
+        let std = Math.sqrt((d.sum2 - results.length * mean * mean) / (results.length - 1));
+        return {
+            mean: mean,
+            std: std
+        };
+    } else {
+        return null;
+    };
 }
